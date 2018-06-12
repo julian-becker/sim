@@ -4,36 +4,53 @@
 
 //***************************
 
-class Pose3D {};
-class Direction3D {};
-class Duration {};
+class Pose3D {
+    // TODO
+};
+class Direction3D {
+    // TODO
+};
+class Duration {
+    // TODO
+};
 class TimePoint {
+    // TODO
 public:
     TimePoint operator+=(Duration const&)
     {
+        // TODO
         return {};
     }
 
     friend bool operator == (TimePoint const&, TimePoint const&) {
+        // TODO
         return true;
     }
 };
 
 
 class Transformation {
+    // TODO
 public:
     Pose3D operator()(Pose3D) {
-        return {};
+        return {
+            // TODO
+        };
     }
 };
 
-class AngleVelocity {};
-class Acceleration {};
+class AngleVelocity {
+    // TODO
+};
+class Acceleration {
+    // TODO
+};
 
 
 
 //***************************
 class KinematicState {
+    // TODO
     TimePoint m_time;
 public:
     KinematicState(TimePoint time)
@@ -73,6 +90,8 @@ public:
     KinematicState evaluateAtTime(TimePoint) const;
 
     TrajectoryRange getRange(Duration) const;
+
+    Trajectory transformed(Transformation const&) const;
 };
 
 class TrajectoryIterator : public std::iterator<
@@ -141,9 +160,15 @@ TrajectoryRange Trajectory::getRange(Duration step) const {
     return {TimePoint{}, TimePoint{}, step, *this};
 }
 
+Trajectory Trajectory::transformed(Transformation const&) const {
+    return {};
+}
+
 class TrajectoryBuilder {
+    // TODO
 public:
     Trajectory build() const {
+        // TODO
         return {};
     }
     TrajectoryBuilder& initialPose(Pose3D) { return *this; }
@@ -155,6 +180,7 @@ public:
 //***************************
 
 class SimulatorConfig {
+    // TODO
     Duration m_timeStep;
 public:
     SimulatorConfig(Duration timeStep)
@@ -165,6 +191,7 @@ public:
 };
 
 class SimulatorConfigBuilder {
+    // TODO
     Duration m_timeStep;
 
 public:
@@ -181,45 +208,67 @@ public:
 
 
 //***************************
-class EnvironmentConfig {};
+class EnvironmentConfig {
+    // TODO
+};
 
 class EnvironmentConfigBuilder {
+    // TODO
 public:
     EnvironmentConfig build() const {
+        // TODO
         return {};
     }
 
     EnvironmentConfigBuilder& addSphere() {
+        // TODO
         return *this;
     }
 
     EnvironmentConfigBuilder& addBox() {
+        // TODO
         return *this;
     }
 };
 //***************************
 
-class ImuSensorConfig { public: ImuSensorConfig(std::string){} };
-class Laser2dSensorConfig { public: Laser2dSensorConfig(std::string) {} };
+class ImuSensorConfig {
+    // TODO
+public:
+    ImuSensorConfig(std::string){}
+};
+class Laser2dSensorConfig {
+    // TODO
+public:
+    Laser2dSensorConfig(std::string) {}
+};
 
 //***************************
-class SystemConfig {};
+class SystemConfig {
+    // TODO
+};
 
 class SystemConfigBuilder {
+    // TODO
 public:
     SystemConfig build() const {
+        // TODO
         return {};
     }
     SystemConfigBuilder& addImu(ImuSensorConfig) {
+        // TODO
         return *this;
     }
     SystemConfigBuilder& add2dLaser(Laser2dSensorConfig) {
+        // TODO
         return *this;
     }
 };
 
 //***************************
-class Environment {};
+class Environment {
+    // TODO
+};
 
 class EnvironmentFactory {
 public:
@@ -229,19 +278,32 @@ public:
 };
 
 class RawSensorDataCollector {
+    // TODO
 public:
-    void addImuSample(TimePoint) {}
-    void add2dLaserSamples(TimePoint) {}
+    void addImuSample(TimePoint) {
+        // TODO
+    }
+    void add2dLaserSamples(TimePoint) {
+        // TODO
+    }
 };
-
 
 
 //***************************
 class AbstractSensorImpl {
 public:
     virtual std::function<void(RawSensorDataCollector&)>
-    sample(
-        Environment& env, KinematicState const& state) const = 0;
+    sample(Environment& env, KinematicState const& state) const = 0;
+
+    virtual std::function<void(RawSensorDataCollector&)>
+    sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const {
+        return [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
+            for(auto const& state : trajectory.getRange(period)) {
+                sample(env, state)(collector);
+            }
+        };
+
+    }
 };
 
 class AbstractSensor {
@@ -253,11 +315,16 @@ public:
     {}
 
     std::function<void(RawSensorDataCollector&)>
-    sample(Environment& env, KinematicState const& state) const
-    {
+    sample(Environment& env, KinematicState const& state) const {
         return m_impl->sample(env, state);
     };
+
+    virtual std::function<void(RawSensorDataCollector&)>
+    sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const {
+        return m_impl->sampleAt(env, trajectory, period);
+    }
 };
+
 
 //***************************
 class ImuSensorImpl : public AbstractSensorImpl {
@@ -269,9 +336,10 @@ public:
                 { Acceleration{ state.getAcceleration() + gravity }
                 , AngleVelocity{ state.getAngularVelocityFrom() }
                 }; */
-            collector.addImuSample(state.getTime()/*, sample*/);
+            collector.addImuSample(state.getTime()/*sample*/);
         };
     }
+
 };
 
 
@@ -279,6 +347,7 @@ class SystemSensorImpl : public AbstractSensorImpl {
     struct SensorConfig {
         AbstractSensor sensor;
         Transformation trafo;
+        Duration period;
     };
     std::vector<SensorConfig> m_sensors;
 
@@ -288,6 +357,15 @@ public:
         return [&state,&env,this](RawSensorDataCollector& collector) {
             for(auto const& sensorConfig : m_sensors) {
                 sensorConfig.sensor.sample(env, state.transformed(sensorConfig.trafo))(collector);
+            }
+        };
+    }
+
+    virtual std::function<void(RawSensorDataCollector&)>
+    sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const override {
+        return [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
+            for(auto const& config : m_sensors) {
+                config.sensor.sampleAt(env, trajectory.transformed(config.trafo), config.period)(collector);
             }
         };
     }
@@ -340,6 +418,8 @@ public:
 //***************************
 int main()
 {
+
+
     auto simulatorConfig =
         SimulatorConfigBuilder()
             /* ... */
@@ -376,3 +456,17 @@ int main()
 
     std::cout << "hello world from simulator" << std::endl;
 }
+
+
+/*
+void test() {
+    System system;
+    Trajectory trajectory;
+    Environment environment;
+
+    ScanFileWriter scanFileWriter;
+    SimulatorConfig simConfig;
+
+    auto simulator = Simulator{simConfig,environment};
+    simulator.simulationOf(system, trajectory).runWith(scanFileWriter);
+}*/
