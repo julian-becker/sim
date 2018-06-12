@@ -290,18 +290,51 @@ public:
 
 
 //***************************
+
+class SimulationSetup {};
+class Simulation {
+    std::function<void(RawSensorDataCollector&)> m_behavior;
+
+public:
+    Simulation(std::function<void(RawSensorDataCollector&)> behavior)
+        : m_behavior{ std::move(behavior) }
+    {}
+
+    void run(RawSensorDataCollector& dataCollector) {
+        m_behavior(dataCollector);
+    }
+};
+
+class SimulationBuilder {
+    std::function<void(RawSensorDataCollector&)> m_behavior;
+
+public:
+    SimulationBuilder& setBehavior(std::function<void(RawSensorDataCollector&)> behavior) {
+        m_behavior = std::move(behavior);
+        return *this;
+    }
+    Simulation build() const {
+        return { m_behavior };
+    }
+};
+
+
+//***************************
 class AbstractSensorImpl {
 public:
-    virtual std::function<void(RawSensorDataCollector&)>
+    virtual Simulation
     sample(Environment& env, KinematicState const& state) const = 0;
 
-    virtual std::function<void(RawSensorDataCollector&)>
+    virtual Simulation
     sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const {
-        return [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
+        const auto behavior = [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
             for(auto const& state : trajectory.getRange(period)) {
-                sample(env, state)(collector);
+                sample(env, state).run(collector);
             }
         };
+        return SimulationBuilder()
+            .setBehavior(behavior)
+            .build();
 
     }
 };
@@ -314,12 +347,12 @@ public:
         : m_impl{std::move(impl)}
     {}
 
-    std::function<void(RawSensorDataCollector&)>
+    Simulation
     sample(Environment& env, KinematicState const& state) const {
         return m_impl->sample(env, state);
     };
 
-    virtual std::function<void(RawSensorDataCollector&)>
+    Simulation
     sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const {
         return m_impl->sampleAt(env, trajectory, period);
     }
@@ -329,15 +362,18 @@ public:
 //***************************
 class ImuSensorImpl : public AbstractSensorImpl {
 public:
-    virtual std::function<void(RawSensorDataCollector&)>
+    virtual Simulation
     sample(Environment& env, KinematicState const& state) const {
-        return [&state](RawSensorDataCollector& collector) {
+        auto const behavior = [&state](RawSensorDataCollector& collector) {
             /* auto sample =
                 { Acceleration{ state.getAcceleration() + gravity }
                 , AngleVelocity{ state.getAngularVelocityFrom() }
                 }; */
             collector.addImuSample(state.getTime()/*sample*/);
         };
+        return SimulationBuilder()
+            .setBehavior(behavior)
+            .build();
     }
 
 };
@@ -352,22 +388,35 @@ class SystemSensorImpl : public AbstractSensorImpl {
     std::vector<SensorConfig> m_sensors;
 
 public:
-    virtual std::function<void(RawSensorDataCollector&)>
+    virtual Simulation
     sample(Environment& env, KinematicState const& state) const override {
-        return [&state,&env,this](RawSensorDataCollector& collector) {
+        auto const behavior = [&state,&env,this](RawSensorDataCollector& collector) {
             for(auto const& sensorConfig : m_sensors) {
-                sensorConfig.sensor.sample(env, state.transformed(sensorConfig.trafo))(collector);
+                auto simulation = sensorConfig.sensor.sample(
+                    env,
+                    state.transformed(sensorConfig.trafo));
+                simulation.run(collector);
             }
         };
+        return SimulationBuilder()
+            .setBehavior(behavior)
+            .build();
     }
 
-    virtual std::function<void(RawSensorDataCollector&)>
+    virtual Simulation
     sampleAt(Environment& env, Trajectory const& trajectory, Duration const& period) const override {
-        return [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
+        auto const behavior = [&env,&trajectory,&period, this](RawSensorDataCollector& collector) {
             for(auto const& config : m_sensors) {
-                config.sensor.sampleAt(env, trajectory.transformed(config.trafo), config.period)(collector);
+                auto simulation = config.sensor.sampleAt(
+                    env,
+                    trajectory.transformed(config.trafo),
+                    config.period);
+                simulation.run(collector);
             }
         };
+        return SimulationBuilder()
+            .setBehavior(behavior)
+            .build();
     }
 };
 
@@ -378,10 +427,6 @@ public:
     }
 };
 
-//***************************
-
-class SimulationSetup {};
-class Simulation {};
 
 class Simulator {
     SimulatorConfig m_simConfig;
@@ -397,7 +442,8 @@ public:
     simulate(AbstractSensor const& sensor, Trajectory const& trajectory) {
         return [&sensor,&trajectory,this](RawSensorDataCollector& collector) {
             for(auto const& state : trajectory.getRange(m_simConfig.getTimeStep())) {
-                sensor.sample(m_env, state)(collector);
+                auto simulation = sensor.sample(m_env, state);
+                simulation.run(collector);
             }
         };
     }
